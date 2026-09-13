@@ -6,6 +6,7 @@ import { generateRoomId, generateCreatorToken } from './crypto';
 // and can be backed by Redis / KV when configured via REDIS_URL.
 const roomsMap = new Map<string, RoomRecord>();
 const signalsMap = new Map<string, SignalMessage[]>();
+const destroyedRoomsSet = new Set<string>();
 
 const DEFAULT_ROOM_TTL_MS = 60 * 60 * 1000; // 60 minutes
 const MAX_SIGNALS_PER_ROOM = 60; // Max queue size to prevent memory bloat
@@ -48,8 +49,39 @@ export function createRoom(): { room: RoomRecord; creatorToken: string } {
 
 export function getRoom(id: string): RoomRecord | null {
   cleanupOldRooms();
-  const room = roomsMap.get(id);
-  if (!room) return null;
+
+  if (destroyedRoomsSet.has(id)) {
+    return {
+      id,
+      createdAt: Date.now() - 300000,
+      expiresAt: Date.now() + 3600000,
+      status: 'DESTROYED',
+      creatorToken: '',
+      destroyedAt: Date.now(),
+      participantsCount: 0,
+      lastActiveAt: Date.now(),
+    };
+  }
+
+  let room = roomsMap.get(id);
+  if (!room) {
+    // Recognize valid Vanyshe room ID format across serverless cold starts
+    if (/^vny-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}$/.test(id)) {
+      room = {
+        id,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + DEFAULT_ROOM_TTL_MS,
+        status: 'WAITING',
+        creatorToken: '',
+        participantsCount: 1,
+        lastActiveAt: Date.now(),
+      };
+      roomsMap.set(id, room);
+      signalsMap.set(id, []);
+    } else {
+      return null;
+    }
+  }
 
   const now = Date.now();
   if (room.status !== 'DESTROYED' && now > room.expiresAt) {
@@ -106,15 +138,17 @@ export function unregisterParticipant(id: string): void {
 
 export function destroyRoom(id: string, token: string): { success: boolean; error?: string } {
   const room = roomsMap.get(id);
-  if (!room) return { success: false, error: 'Room not found' };
-
-  if (room.creatorToken !== token) {
+  if (room && room.creatorToken && room.creatorToken !== token) {
     return { success: false, error: 'Unauthorized: invalid creator token' };
   }
 
-  room.status = 'DESTROYED';
-  room.destroyedAt = Date.now();
-  room.participantsCount = 0;
+  destroyedRoomsSet.add(id);
+
+  if (room) {
+    room.status = 'DESTROYED';
+    room.destroyedAt = Date.now();
+    room.participantsCount = 0;
+  }
 
   // Immediately wipe all signalling messages
   signalsMap.delete(id);
