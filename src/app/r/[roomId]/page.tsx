@@ -65,6 +65,7 @@ export default function RoomPage() {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [remotePeerConnected, setRemotePeerConnected] = useState(false);
   const [remotePeerMuted, setRemotePeerMuted] = useState(false);
+  const [remotePeerCamOff, setRemotePeerCamOff] = useState(false);
 
   // Privacy Shield States
   const [capturePolicy, setCapturePolicy] = useState<CapturePolicy>('DETECT_ALERT');
@@ -81,11 +82,14 @@ export default function RoomPage() {
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastSignalTimestampRef = useRef<number>(0);
+  const iceCandidatesQueueRef = useRef<RTCIceCandidateInit[]>([]);
+  const seenSignalIdsRef = useRef<Set<string>>(new Set());
   const callTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isInitiatorRef = useRef<boolean>(false);
   const captureDetectorRef = useRef<CaptureDetector | null>(null);
@@ -147,6 +151,29 @@ export default function RoomPage() {
       }
     };
   }, [roomId]);
+
+  // Synchronize media streams with video elements whenever uiState, camActive, or stream refs change
+  useEffect(() => {
+    if (uiState === 'CONNECTED') {
+      if (localVideoRef.current && localStreamRef.current) {
+        if (localVideoRef.current.srcObject !== localStreamRef.current) {
+          localVideoRef.current.srcObject = localStreamRef.current;
+        }
+      }
+      if (remoteVideoRef.current && remoteStreamRef.current) {
+        if (remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
+          remoteVideoRef.current.srcObject = remoteStreamRef.current;
+        }
+        remoteVideoRef.current.play().catch(() => {});
+      }
+    } else if (uiState === 'WAITING_ROOM') {
+      if (previewVideoRef.current && localStreamRef.current) {
+        if (previewVideoRef.current.srcObject !== localStreamRef.current) {
+          previewVideoRef.current.srcObject = localStreamRef.current;
+        }
+      }
+    }
+  }, [uiState, camActive, remotePeerConnected]);
 
   // Initialize and update CaptureDetector
   useEffect(() => {
@@ -281,6 +308,8 @@ export default function RoomPage() {
       });
 
       localStreamRef.current = stream;
+      setCamActive(true);
+      setMicActive(true);
       if (previewVideoRef.current) {
         previewVideoRef.current.srcObject = stream;
       }
@@ -291,6 +320,7 @@ export default function RoomPage() {
         const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         localStreamRef.current = audioStream;
         setCamActive(false);
+        setMicActive(true);
       } catch {
         setMicActive(false);
         setCamActive(false);
@@ -298,32 +328,189 @@ export default function RoomPage() {
     }
   };
 
-  // Toggle Camera
-  const toggleCamera = () => {
-    if (localStreamRef.current) {
-      const videoTracks = localStreamRef.current.getVideoTracks();
-      if (videoTracks.length > 0) {
-        const newState = !camActive;
-        videoTracks[0].enabled = newState;
-        setCamActive(newState);
-        trackEvent(newState ? 'camera_enabled' : 'camera_disabled');
+  // Toggle Camera with dynamic acquisition & peer synchronization
+  const toggleCamera = async () => {
+    // Case 1: Camera is currently ON -> turn it OFF
+    if (camActive) {
+      if (localStreamRef.current) {
+        localStreamRef.current.getVideoTracks().forEach((track) => {
+          track.enabled = false;
+        });
       }
+      setCamActive(false);
+      trackEvent('camera_disabled');
+
+      sendPeerMessage({ type: 'PEER_CAMERA', enabled: false });
+      postSignal('peer-camera-changed', { enabled: false });
+      return;
+    }
+
+    // Case 2: Camera is currently OFF -> turn it ON
+    // Check if we already have a live video track in localStreamRef
+    const existingVideoTrack = localStreamRef.current
+      ?.getVideoTracks()
+      .find((t) => t.readyState === 'live');
+
+    if (existingVideoTrack) {
+      existingVideoTrack.enabled = true;
+      setCamActive(true);
+      trackEvent('camera_enabled');
+
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = localStreamRef.current;
+      }
+      if (previewVideoRef.current) {
+        previewVideoRef.current.srcObject = localStreamRef.current;
+      }
+
+      if (peerConnectionRef.current) {
+        const senders = peerConnectionRef.current.getSenders();
+        const videoSender = senders.find(
+          (s) => s.track?.kind === 'video' || (!s.track && (s as any).kind === 'video')
+        );
+        if (videoSender) {
+          videoSender.replaceTrack(existingVideoTrack).catch(console.warn);
+        }
+      }
+
+      sendPeerMessage({ type: 'PEER_CAMERA', enabled: true });
+      postSignal('peer-camera-changed', { enabled: true });
+      return;
+    }
+
+    // Case 3: No live video track exists -> request camera access now
+    try {
+      const videoStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+      });
+      const newVideoTrack = videoStream.getVideoTracks()[0];
+      if (!newVideoTrack) return;
+
+      if (localStreamRef.current) {
+        // Stop & remove any old/ended video tracks
+        localStreamRef.current.getVideoTracks().forEach((t) => {
+          localStreamRef.current?.removeTrack(t);
+          t.stop();
+        });
+        localStreamRef.current.addTrack(newVideoTrack);
+      } else {
+        localStreamRef.current = videoStream;
+      }
+
+      setCamActive(true);
+      trackEvent('camera_enabled');
+
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = localStreamRef.current;
+      }
+      if (previewVideoRef.current) {
+        previewVideoRef.current.srcObject = localStreamRef.current;
+      }
+
+      // Update WebRTC peer connection
+      if (peerConnectionRef.current) {
+        const senders = peerConnectionRef.current.getSenders();
+        const videoSender = senders.find(
+          (s) => s.track?.kind === 'video' || (!s.track && (s as any).kind === 'video')
+        );
+        if (videoSender) {
+          await videoSender.replaceTrack(newVideoTrack);
+        } else {
+          peerConnectionRef.current.addTrack(newVideoTrack, localStreamRef.current);
+          if (isCreator) {
+            createAndSendOffer();
+          } else {
+            postSignal('renegotiate-request', { peerId });
+          }
+        }
+      }
+
+      sendPeerMessage({ type: 'PEER_CAMERA', enabled: true });
+      postSignal('peer-camera-changed', { enabled: true });
+    } catch (err: any) {
+      console.warn('Failed to enable camera upon toggle:', err);
+      setErrorMessage('Camera access was denied or device is not available.');
     }
   };
 
-  // Toggle Microphone
-  const toggleMicrophone = () => {
-    if (localStreamRef.current) {
-      const audioTracks = localStreamRef.current.getAudioTracks();
-      if (audioTracks.length > 0) {
-        const newState = !micActive;
-        audioTracks[0].enabled = newState;
-        setMicActive(newState);
-        trackEvent(newState ? 'microphone_enabled' : 'microphone_disabled');
-
-        // Notify peer via DataChannel
-        sendPeerMessage({ type: 'PEER_MUTED', muted: !newState });
+  // Toggle Microphone with dynamic acquisition & peer synchronization
+  const toggleMicrophone = async () => {
+    if (micActive) {
+      if (localStreamRef.current) {
+        localStreamRef.current.getAudioTracks().forEach((track) => {
+          track.enabled = false;
+        });
       }
+      setMicActive(false);
+      trackEvent('microphone_disabled');
+      sendPeerMessage({ type: 'PEER_MUTED', muted: true });
+      postSignal('peer-mic-changed', { muted: true });
+      return;
+    }
+
+    const existingAudioTrack = localStreamRef.current
+      ?.getAudioTracks()
+      .find((t) => t.readyState === 'live');
+
+    if (existingAudioTrack) {
+      existingAudioTrack.enabled = true;
+      setMicActive(true);
+      trackEvent('microphone_enabled');
+
+      if (peerConnectionRef.current) {
+        const senders = peerConnectionRef.current.getSenders();
+        const audioSender = senders.find(
+          (s) => s.track?.kind === 'audio' || (!s.track && (s as any).kind === 'audio')
+        );
+        if (audioSender) {
+          audioSender.replaceTrack(existingAudioTrack).catch(console.warn);
+        }
+      }
+
+      sendPeerMessage({ type: 'PEER_MUTED', muted: false });
+      postSignal('peer-mic-changed', { muted: false });
+      return;
+    }
+
+    try {
+      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const newAudioTrack = audioStream.getAudioTracks()[0];
+      if (!newAudioTrack) return;
+
+      if (localStreamRef.current) {
+        localStreamRef.current.getAudioTracks().forEach((t) => {
+          localStreamRef.current?.removeTrack(t);
+          t.stop();
+        });
+        localStreamRef.current.addTrack(newAudioTrack);
+      } else {
+        localStreamRef.current = audioStream;
+      }
+
+      setMicActive(true);
+      trackEvent('microphone_enabled');
+
+      if (peerConnectionRef.current) {
+        const senders = peerConnectionRef.current.getSenders();
+        const audioSender = senders.find(
+          (s) => s.track?.kind === 'audio' || (!s.track && (s as any).kind === 'audio')
+        );
+        if (audioSender) {
+          await audioSender.replaceTrack(newAudioTrack);
+        } else {
+          peerConnectionRef.current.addTrack(newAudioTrack, localStreamRef.current);
+          if (isCreator) {
+            createAndSendOffer();
+          } else {
+            postSignal('renegotiate-request', { peerId });
+          }
+        }
+      }
+
+      sendPeerMessage({ type: 'PEER_MUTED', muted: false });
+      postSignal('peer-mic-changed', { muted: false });
+    } catch (err) {
+      console.warn('Failed to access microphone:', err);
     }
   };
 
@@ -455,6 +642,7 @@ export default function RoomPage() {
   };
 
   // Setup WebRTC PeerConnection
+  // Setup WebRTC PeerConnection
   const setupWebRTC = async () => {
     const pc = new RTCPeerConnection(RTC_CONFIG);
     peerConnectionRef.current = pc;
@@ -466,12 +654,56 @@ export default function RoomPage() {
       });
     }
 
-    // Handle remote track arrival
-    pc.ontrack = (event) => {
-      if (remoteVideoRef.current && event.streams[0]) {
-        remoteVideoRef.current.srcObject = event.streams[0];
-        setRemotePeerConnected(true);
+    // Ensure transceivers for audio and video exist with direction 'sendrecv'
+    // This guarantees both audio and video m-lines are negotiated in the initial SDP
+    const senders = pc.getSenders();
+    const hasAudioSender = senders.some((s) => s.track?.kind === 'audio' || (!s.track && (s as any).kind === 'audio'));
+    const hasVideoSender = senders.some((s) => s.track?.kind === 'video' || (!s.track && (s as any).kind === 'video'));
+
+    if (!hasAudioSender) {
+      try {
+        pc.addTransceiver('audio', { direction: 'sendrecv' });
+      } catch (e) {
+        console.warn('Could not pre-allocate audio transceiver:', e);
       }
+    }
+    if (!hasVideoSender) {
+      try {
+        pc.addTransceiver('video', { direction: 'sendrecv' });
+      } catch (e) {
+        console.warn('Could not pre-allocate video transceiver:', e);
+      }
+    }
+
+    // Handle remote track arrival
+    const remoteStream = remoteStreamRef.current || new MediaStream();
+    remoteStreamRef.current = remoteStream;
+
+    pc.ontrack = (event) => {
+      console.log('Received remote WebRTC track:', event.track.kind);
+      if (event.streams && event.streams[0]) {
+        event.streams[0].getTracks().forEach((track) => {
+          if (!remoteStream.getTracks().some((t) => t.id === track.id)) {
+            remoteStream.addTrack(track);
+          }
+        });
+      } else if (event.track) {
+        if (!remoteStream.getTracks().some((t) => t.id === event.track.id)) {
+          remoteStream.addTrack(event.track);
+        }
+      }
+
+      event.track.onunmute = () => {
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.play().catch(() => {});
+        }
+      };
+
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = remoteStream;
+        remoteVideoRef.current.play().catch(() => {});
+      }
+      setRemotePeerConnected(true);
     };
 
     // Handle ICE Candidate generation
@@ -525,6 +757,8 @@ export default function RoomPage() {
           handleRemoteRoomDestroyed();
         } else if (msg.type === 'PEER_MUTED') {
           setRemotePeerMuted(msg.muted);
+        } else if (msg.type === 'PEER_CAMERA') {
+          setRemotePeerCamOff(!msg.enabled);
         } else if (msg.type === 'PRIVACY_ALERT') {
           setRemoteCaptureAlert('A supported capture mechanism was detected on another participant’s device.');
         } else if (msg.type === 'ROOM_PAUSED') {
@@ -581,8 +815,9 @@ export default function RoomPage() {
   const startSignallingPoll = () => {
     pollingIntervalRef.current = setInterval(async () => {
       try {
+        const fetchSince = Math.max(0, lastSignalTimestampRef.current - 1000);
         const res = await fetch(
-          `/api/rooms/${roomId}/signal?since=${lastSignalTimestampRef.current}&senderId=${peerId}`
+          `/api/rooms/${roomId}/signal?since=${fetchSince}&senderId=${peerId}`
         );
         if (!res.ok) {
           if (res.status === 410) {
@@ -601,6 +836,9 @@ export default function RoomPage() {
         const pc = peerConnectionRef.current;
 
         for (const sig of signals) {
+          if (seenSignalIdsRef.current.has(sig.id)) continue;
+          seenSignalIdsRef.current.add(sig.id);
+
           if (sig.timestamp > lastSignalTimestampRef.current) {
             lastSignalTimestampRef.current = sig.timestamp;
           }
@@ -626,6 +864,10 @@ export default function RoomPage() {
               setCapturePolicy(sig.payload.policy);
               captureDetectorRef.current?.setPolicy(sig.payload.policy);
             }
+          } else if (sig.type === 'peer-camera-changed') {
+            setRemotePeerCamOff(!sig.payload?.enabled);
+          } else if (sig.type === 'peer-mic-changed') {
+            setRemotePeerMuted(sig.payload?.muted);
           }
 
           if (!pc) continue;
@@ -633,20 +875,49 @@ export default function RoomPage() {
           if (sig.type === 'participant-joined' && isCreator) {
             // Guest joined! Create or re-send offer
             createAndSendOffer();
+          } else if (sig.type === 'renegotiate-request' && isCreator) {
+            createAndSendOffer();
           } else if (sig.type === 'offer' && !isCreator) {
-            await pc.setRemoteDescription(new RTCSessionDescription(sig.payload));
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            await postSignal('answer', answer);
-          } else if (sig.type === 'answer' && isCreator) {
-            if (pc.signalingState !== 'stable') {
+            try {
               await pc.setRemoteDescription(new RTCSessionDescription(sig.payload));
+              // Drain any queued ICE candidates
+              while (iceCandidatesQueueRef.current.length > 0) {
+                const cand = iceCandidatesQueueRef.current.shift();
+                if (cand) {
+                  await pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
+                }
+              }
+              const answer = await pc.createAnswer();
+              await pc.setLocalDescription(answer);
+              await postSignal('answer', answer);
+            } catch (err) {
+              console.error('Error handling offer:', err);
+            }
+          } else if (sig.type === 'answer' && isCreator) {
+            try {
+              if (pc.signalingState !== 'stable') {
+                await pc.setRemoteDescription(new RTCSessionDescription(sig.payload));
+                // Drain any queued ICE candidates
+                while (iceCandidatesQueueRef.current.length > 0) {
+                  const cand = iceCandidatesQueueRef.current.shift();
+                  if (cand) {
+                    await pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
+                  }
+                }
+              }
+            } catch (err) {
+              console.error('Error handling answer:', err);
             }
           } else if (sig.type === 'candidate') {
-            try {
-              await pc.addIceCandidate(new RTCIceCandidate(sig.payload));
-            } catch {
-              // Ignore candidate race condition
+            const cand = sig.payload;
+            if (pc.remoteDescription && pc.remoteDescription.type) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(cand));
+              } catch (e) {
+                console.warn('Error adding ice candidate:', e);
+              }
+            } else {
+              iceCandidatesQueueRef.current.push(cand);
             }
           }
         }
@@ -1046,19 +1317,25 @@ export default function RoomPage() {
               ref={remoteVideoRef}
               autoPlay
               playsInline
-              className={`w-full h-full object-cover ${!remotePeerConnected || isRoomPaused ? 'hidden' : ''}`}
+              className={`w-full h-full object-cover ${!remotePeerConnected || isRoomPaused || remotePeerCamOff ? 'hidden' : ''}`}
             />
-            {(!remotePeerConnected || isRoomPaused) && (
+            {(!remotePeerConnected || isRoomPaused || remotePeerCamOff) && (
               <div className="flex flex-col items-center text-center p-6">
                 <div className="w-16 h-16 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-400 mb-3 animate-pulse">
-                  <VideoIcon className="w-6 h-6" />
+                  {remotePeerCamOff ? <VideoOff className="w-6 h-6 text-zinc-400" /> : <VideoIcon className="w-6 h-6" />}
                 </div>
                 <h3 className="text-base font-medium text-zinc-300 mb-1">
-                  {isRoomPaused ? 'Media feed paused' : 'Waiting for guest to join...'}
+                  {isRoomPaused
+                    ? 'Media feed paused'
+                    : remotePeerCamOff
+                    ? (isCreator ? 'Guest camera is off' : 'Partner camera is off')
+                    : 'Waiting for guest to join...'}
                 </h3>
                 <p className="text-xs text-zinc-500 max-w-xs mb-4">
                   {isRoomPaused
                     ? 'Video is masked while capture alert is resolved.'
+                    : remotePeerCamOff
+                    ? 'Participant has turned off their camera or is in audio-only mode.'
                     : 'Send the room link to your conversation partner.'}
                 </p>
                 {!remotePeerConnected && (

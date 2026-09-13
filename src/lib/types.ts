@@ -53,7 +53,10 @@ export interface SignalMessage {
     | 'room-destroyed'
     | 'privacy-shield-alert'
     | 'privacy-shield-policy-change'
-    | 'privacy-shield-resume';
+    | 'privacy-shield-resume'
+    | 'peer-camera-changed'
+    | 'peer-mic-changed'
+    | 'renegotiate-request';
   payload: any;
   timestamp: number;
 }

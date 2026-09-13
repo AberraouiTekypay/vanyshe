@@ -55,8 +55,22 @@ export async function POST(
     return NextResponse.json({ error: 'Missing required signal fields' }, { status: 400 });
   }
 
-  // Validate signal type (must be WebRTC offer, answer, or candidate)
-  if (!['offer', 'answer', 'candidate', 'participant-joined', 'participant-left', 'room-destroyed'].includes(type)) {
+  // Validate signal type (must be WebRTC offer, answer, candidate, room control, or privacy shield)
+  const allowedSignalTypes = [
+    'offer',
+    'answer',
+    'candidate',
+    'participant-joined',
+    'participant-left',
+    'room-destroyed',
+    'privacy-shield-alert',
+    'privacy-shield-policy-change',
+    'privacy-shield-resume',
+    'peer-camera-changed',
+    'peer-mic-changed',
+    'renegotiate-request',
+  ];
+  if (!allowedSignalTypes.includes(type)) {
     return NextResponse.json({ error: 'Invalid signal type' }, { status: 400 });
   }
 
