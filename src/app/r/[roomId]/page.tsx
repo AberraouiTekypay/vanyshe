@@ -13,14 +13,24 @@ import {
   Copy,
   Check,
   ShieldCheck,
+  ShieldAlert,
   AlertCircle,
   RefreshCw,
   ArrowRight,
   Sparkles,
+  Lock,
+  AlertTriangle,
+  X,
+  Building2,
+  Sliders,
 } from 'lucide-react';
 import { trackEvent } from '@/lib/analytics-client';
 import { hashRoomId } from '@/lib/crypto';
-import { RoomStatus, SignalMessage } from '@/lib/types';
+import { RoomStatus, SignalMessage, CapturePolicy, CaptureDetectionEvent, ShieldSupportLevel } from '@/lib/types';
+import PrivacyShieldIndicator from '@/components/PrivacyShieldIndicator';
+import WatermarkOverlay from '@/components/WatermarkOverlay';
+import { CaptureDetector } from '@/lib/privacy-shield';
+import { getClientCaptureCapabilities } from '@/lib/privacy-shield-matrix';
 
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
@@ -56,6 +66,15 @@ export default function RoomPage() {
   const [remotePeerConnected, setRemotePeerConnected] = useState(false);
   const [remotePeerMuted, setRemotePeerMuted] = useState(false);
 
+  // Privacy Shield States
+  const [capturePolicy, setCapturePolicy] = useState<CapturePolicy>('DETECT_ALERT');
+  const [watermarkEnabled, setWatermarkEnabled] = useState(false);
+  const [activeCaptureAlert, setActiveCaptureAlert] = useState<CaptureDetectionEvent | null>(null);
+  const [remoteCaptureAlert, setRemoteCaptureAlert] = useState<string | null>(null);
+  const [isRoomPaused, setIsRoomPaused] = useState(false);
+  const [pauseReason, setPauseReason] = useState('');
+  const [capabilities, setCapabilities] = useState(() => getClientCaptureCapabilities());
+
   // References
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -69,10 +88,13 @@ export default function RoomPage() {
   const lastSignalTimestampRef = useRef<number>(0);
   const callTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isInitiatorRef = useRef<boolean>(false);
+  const captureDetectorRef = useRef<CaptureDetector | null>(null);
 
   // Check initial room status & creator token
   useEffect(() => {
     if (!roomId) return;
+
+    setCapabilities(getClientCaptureCapabilities());
 
     // Check if current user holds creator token in sessionStorage
     const token = typeof window !== 'undefined' ? sessionStorage.getItem(`vanyshe_creator_${roomId}`) : null;
@@ -101,6 +123,12 @@ export default function RoomPage() {
         } else if (data.status === 'EXPIRED') {
           setUiState('EXPIRED');
         } else {
+          if (data.capturePolicy) {
+            setCapturePolicy(data.capturePolicy);
+          }
+          if (typeof data.watermarkEnabled === 'boolean') {
+            setWatermarkEnabled(data.watermarkEnabled);
+          }
           setUiState('WAITING_ROOM');
           initLocalPreview();
         }
@@ -114,12 +142,31 @@ export default function RoomPage() {
 
     return () => {
       stopAllMedia();
+      if (captureDetectorRef.current) {
+        captureDetectorRef.current.stop();
+      }
     };
   }, [roomId]);
 
-  // Call duration counter
+  // Initialize and update CaptureDetector
   useEffect(() => {
     if (uiState === 'CONNECTED') {
+      const detector = new CaptureDetector(capturePolicy, (event) => {
+        handleCaptureEvent(event);
+      });
+      captureDetectorRef.current = detector;
+      detector.start();
+
+      return () => {
+        detector.stop();
+        captureDetectorRef.current = null;
+      };
+    }
+  }, [uiState, capturePolicy]);
+
+  // Call duration counter
+  useEffect(() => {
+    if (uiState === 'CONNECTED' && !isRoomPaused) {
       callTimerRef.current = setInterval(() => {
         setCallDuration((prev) => prev + 1);
       }, 1000);
@@ -129,7 +176,96 @@ export default function RoomPage() {
     return () => {
       if (callTimerRef.current) clearInterval(callTimerRef.current);
     };
-  }, [uiState]);
+  }, [uiState, isRoomPaused]);
+
+  // Handle Capture Detection Event
+  const handleCaptureEvent = (event: CaptureDetectionEvent) => {
+    if (capturePolicy === 'OFF') return;
+
+    trackEvent('capture_event_detected', {
+      errorCategory: event.type,
+    });
+
+    if (capturePolicy === 'DETECT_ALERT') {
+      setActiveCaptureAlert(event);
+      // Broadcast to peer via DataChannel & Signal route
+      sendPeerMessage({ type: 'PRIVACY_ALERT', eventType: event.type });
+      postSignal('privacy-shield-alert', { eventType: event.type });
+    } else if (capturePolicy === 'STRICT') {
+      setIsRoomPaused(true);
+      setPauseReason(event.details || 'A supported capture mechanism was detected on your device.');
+      setActiveCaptureAlert(event);
+      sendPeerMessage({ type: 'ROOM_PAUSED', reason: 'Capture activity detected' });
+      postSignal('privacy-shield-alert', { eventType: event.type, strictPause: true });
+    }
+  };
+
+  // Acknowledge and resume from pause
+  const acknowledgeAndResume = () => {
+    setIsRoomPaused(false);
+    setActiveCaptureAlert(null);
+    setRemoteCaptureAlert(null);
+    trackEvent('privacy_shield_acknowledged');
+    sendPeerMessage({ type: 'ROOM_RESUMED' });
+    postSignal('privacy-shield-resume', { resumed: true });
+  };
+
+  // Update room capture policy (Creator action)
+  const handlePolicyChange = async (newPolicy: CapturePolicy) => {
+    setCapturePolicy(newPolicy);
+    captureDetectorRef.current?.setPolicy(newPolicy);
+
+    if (creatorToken) {
+      try {
+        await fetch(`/api/rooms/${roomId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'update-policy',
+            creatorToken,
+            capturePolicy: newPolicy,
+            watermarkEnabled,
+          }),
+        });
+        sendPeerMessage({ type: 'POLICY_CHANGED', policy: newPolicy });
+        postSignal('privacy-shield-policy-change', { policy: newPolicy });
+      } catch (err) {
+        console.warn('Failed to update room policy:', err);
+      }
+    }
+  };
+
+  // Update watermark state (Creator action)
+  const handleWatermarkToggle = async (enabled: boolean) => {
+    setWatermarkEnabled(enabled);
+    if (creatorToken) {
+      try {
+        await fetch(`/api/rooms/${roomId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'update-policy',
+            creatorToken,
+            capturePolicy,
+            watermarkEnabled: enabled,
+          }),
+        });
+      } catch (err) {
+        console.warn('Failed to toggle watermark:', err);
+      }
+    }
+  };
+
+  // Helper to send DataChannel message
+  const sendPeerMessage = (payload: any) => {
+    if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
+      try {
+        dataChannelRef.current.send(JSON.stringify(payload));
+      } catch {
+        // safe ignore
+      }
+    }
+  };
 
   // Initialize preview in Waiting Room
   const initLocalPreview = async () => {
@@ -186,14 +322,12 @@ export default function RoomPage() {
         trackEvent(newState ? 'microphone_enabled' : 'microphone_disabled');
 
         // Notify peer via DataChannel
-        if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
-          dataChannelRef.current.send(JSON.stringify({ type: 'PEER_MUTED', muted: !newState }));
-        }
+        sendPeerMessage({ type: 'PEER_MUTED', muted: !newState });
       }
     }
   };
 
-  // Screen Sharing
+  // Screen Sharing with Privacy Shield Distinction
   const toggleScreenShare = async () => {
     if (!isScreenSharing) {
       try {
@@ -204,6 +338,9 @@ export default function RoomPage() {
 
         screenStreamRef.current = screenStream;
         const screenVideoTrack = screenStream.getVideoTracks()[0];
+
+        // Notify Privacy Shield that screen sharing was intentionally triggered by Vanyshe
+        captureDetectorRef.current?.setVanysheScreenSharing(true);
 
         // Replace track in RTCPeerConnection
         if (peerConnectionRef.current) {
@@ -237,6 +374,9 @@ export default function RoomPage() {
       screenStreamRef.current.getTracks().forEach((track) => track.stop());
       screenStreamRef.current = null;
     }
+
+    // Inform detector that intentional share ended
+    captureDetectorRef.current?.setVanysheScreenSharing(false);
 
     // Restore local camera track
     if (localStreamRef.current && peerConnectionRef.current) {
@@ -281,6 +421,9 @@ export default function RoomPage() {
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
       pollingIntervalRef.current = null;
+    }
+    if (captureDetectorRef.current) {
+      captureDetectorRef.current.stop();
     }
   };
 
@@ -382,6 +525,17 @@ export default function RoomPage() {
           handleRemoteRoomDestroyed();
         } else if (msg.type === 'PEER_MUTED') {
           setRemotePeerMuted(msg.muted);
+        } else if (msg.type === 'PRIVACY_ALERT') {
+          setRemoteCaptureAlert('A supported capture mechanism was detected on another participant’s device.');
+        } else if (msg.type === 'ROOM_PAUSED') {
+          setIsRoomPaused(true);
+          setPauseReason('Capture activity was detected on another participant’s device.');
+        } else if (msg.type === 'ROOM_RESUMED') {
+          setIsRoomPaused(false);
+          setRemoteCaptureAlert(null);
+        } else if (msg.type === 'POLICY_CHANGED') {
+          setCapturePolicy(msg.policy);
+          captureDetectorRef.current?.setPolicy(msg.policy);
         }
       } catch {
         // ignore malformed
@@ -456,6 +610,24 @@ export default function RoomPage() {
             return;
           }
 
+          // Privacy Shield Signal Events
+          if (sig.type === 'privacy-shield-alert') {
+            if (sig.payload?.strictPause) {
+              setIsRoomPaused(true);
+              setPauseReason('Capture activity was detected on another participant’s device.');
+            } else {
+              setRemoteCaptureAlert('A supported capture mechanism was detected on another participant’s device.');
+            }
+          } else if (sig.type === 'privacy-shield-resume') {
+            setIsRoomPaused(false);
+            setRemoteCaptureAlert(null);
+          } else if (sig.type === 'privacy-shield-policy-change') {
+            if (sig.payload?.policy) {
+              setCapturePolicy(sig.payload.policy);
+              captureDetectorRef.current?.setPolicy(sig.payload.policy);
+            }
+          }
+
           if (!pc) continue;
 
           if (sig.type === 'participant-joined' && isCreator) {
@@ -510,13 +682,7 @@ export default function RoomPage() {
     trackEvent('room_destroyed', { durationSeconds: callDuration });
 
     // Send instant DataChannel broadcast
-    if (dataChannelRef.current && dataChannelRef.current.readyState === 'open') {
-      try {
-        dataChannelRef.current.send(JSON.stringify({ type: 'ROOM_DESTROYED' }));
-      } catch {
-        // safe ignore
-      }
-    }
+    sendPeerMessage({ type: 'ROOM_DESTROYED' });
 
     // Signal server-side destruction
     try {
@@ -608,23 +774,70 @@ export default function RoomPage() {
     );
   }
 
-  // RENDER: WAITING ROOM STATE
+  // RENDER: WAITING ROOM STATE (WITH PRE-JOIN PRIVACY SHIELD)
   if (uiState === 'WAITING_ROOM') {
     return (
       <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white p-4">
         <div className="max-w-xl w-full">
-          {/* Header */}
-          <div className="text-center mb-6">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-zinc-800 bg-zinc-900/80 text-xs font-mono text-emerald-400 mb-3">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              Room ready
+          {/* Top Privacy Shield Notice */}
+          <div className="mb-6 p-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 backdrop-blur-md">
+            <div className="flex items-center gap-2 text-xs font-mono text-emerald-400 font-semibold mb-1">
+              <ShieldCheck className="w-4 h-4" />
+              <span>PRIVACY SHIELD PROTECTED</span>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">
-              You’re entering a private Vanyshe room.
-            </h1>
-            <p className="text-sm text-zinc-400">
-              Check your camera and microphone before joining.
+            <p className="text-xs text-zinc-200 font-medium">
+              This conversation is not recorded by Vanyshe.
             </p>
+            <p className="text-[11px] text-zinc-400 mt-0.5">
+              Vanyshe can detect certain browser-level capture activity, but no website can detect every possible form of recording or photography.
+            </p>
+
+            {/* Room Policy Badge / Creator Select */}
+            <div className="mt-3 pt-3 border-t border-emerald-500/15 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+              <span className="text-zinc-400">Enforced Capture Policy:</span>
+              <span className="text-emerald-300 font-bold bg-emerald-950/60 px-2.5 py-0.5 rounded-lg border border-emerald-500/20">
+                {capturePolicy === 'STRICT'
+                  ? 'Strict Privacy (Pause Room)'
+                  : capturePolicy === 'OFF'
+                  ? 'Off (No Monitoring)'
+                  : 'Detect & Alert (Default)'}
+              </span>
+            </div>
+
+            {/* Creator policy adjustment in waiting room */}
+            {isCreator && (
+              <div className="mt-3 pt-2 border-t border-zinc-800/80 flex items-center justify-between text-xs">
+                <span className="text-zinc-400">Change policy:</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => handlePolicyChange('OFF')}
+                    className={`px-2 py-0.5 rounded text-[11px] font-mono transition-colors ${
+                      capturePolicy === 'OFF' ? 'bg-zinc-800 text-white font-bold' : 'text-zinc-500 hover:text-white'
+                    }`}
+                  >
+                    Off
+                  </button>
+                  <button
+                    onClick={() => handlePolicyChange('DETECT_ALERT')}
+                    className={`px-2 py-0.5 rounded text-[11px] font-mono transition-colors ${
+                      capturePolicy === 'DETECT_ALERT'
+                        ? 'bg-emerald-600 text-white font-bold'
+                        : 'text-zinc-500 hover:text-white'
+                    }`}
+                  >
+                    Alert
+                  </button>
+                  <button
+                    onClick={() => handlePolicyChange('STRICT')}
+                    className={`px-2 py-0.5 rounded text-[11px] font-mono transition-colors ${
+                      capturePolicy === 'STRICT' ? 'bg-red-600 text-white font-bold' : 'text-zinc-500 hover:text-white'
+                    }`}
+                  >
+                    Strict
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Camera Preview Box */}
@@ -678,7 +891,7 @@ export default function RoomPage() {
 
             <button
               onClick={copyRoomLink}
-              className="w-full py-3 px-4 rounded-xl border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-900 text-zinc-300 hover:text-white text-sm font-medium transition-all flex items-center justify-center gap-2"
+              className="w-full py-3 px-4 rounded-xl border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-900 text-zinc-300 hover:text-white text-sm font-medium transition-all flex items-center justify-center gap-2 cursor-pointer"
             >
               {copiedLink ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
               <span>{copiedLink ? 'Link Copied to Clipboard' : 'Copy Room Link to Share'}</span>
@@ -688,7 +901,7 @@ export default function RoomPage() {
           {/* Subtle privacy note */}
           <div className="mt-6 text-center text-xs text-zinc-500 flex items-center justify-center gap-2">
             <ShieldCheck className="w-4 h-4 text-emerald-500" />
-            <span>Encrypted DTLS-SRTP — No call recording</span>
+            <span>Encrypted DTLS-SRTP v1.3 — Zero conversation retention</span>
           </div>
         </div>
       </div>
@@ -697,8 +910,8 @@ export default function RoomPage() {
 
   // RENDER: ACTIVE IN-CALL STATE
   return (
-    <div className="min-h-screen bg-zinc-950 flex flex-col text-white select-none">
-      {/* Top Bar */}
+    <div className="min-h-screen bg-zinc-950 flex flex-col text-white select-none relative">
+      {/* Top Bar with Privacy Shield Indicator */}
       <header className="h-14 border-b border-zinc-800/80 px-4 sm:px-6 flex items-center justify-between bg-zinc-950/80 backdrop-blur-md z-20">
         <div className="flex items-center gap-3">
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -709,19 +922,123 @@ export default function RoomPage() {
           <span className="text-xs font-mono text-zinc-400">{formatDuration(callDuration)}</span>
         </div>
 
+        {/* Center/Right: Privacy Shield Persistent Indicator */}
         <div className="flex items-center gap-3">
+          <PrivacyShieldIndicator
+            policy={capturePolicy}
+            supportLevel={capabilities.supportLevel}
+            isCreator={isCreator}
+            watermarkEnabled={watermarkEnabled}
+            onPolicyChange={handlePolicyChange}
+            onWatermarkToggle={handleWatermarkToggle}
+          />
+
           <button
             onClick={copyRoomLink}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 transition-colors cursor-pointer"
           >
             {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-            <span className="hidden sm:inline">{copiedLink ? 'Copied' : 'Share Link'}</span>
+            <span className="hidden sm:inline">{copiedLink ? 'Copied' : 'Share'}</span>
           </button>
         </div>
       </header>
 
+      {/* Capture Alert Banner: Local Device Alert */}
+      {activeCaptureAlert && !isRoomPaused && (
+        <div className="bg-amber-500/10 border-b border-amber-500/30 px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs z-30 animate-in slide-in-from-top duration-300">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <div>
+              <span className="font-bold text-amber-300">Capture detected: </span>
+              <span className="text-zinc-300">
+                {activeCaptureAlert.type === 'print_screen_detected'
+                  ? 'Print Screen key was pressed.'
+                  : activeCaptureAlert.type === 'screenshot_attempt_detected'
+                  ? 'Possible screenshot shortcut detected.'
+                  : 'A supported capture mechanism may be active on this device.'}
+              </span>{' '}
+              <span className="text-zinc-400 font-medium">The conversation has not been recorded by Vanyshe.</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setActiveCaptureAlert(null)}
+              className="px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 rounded-lg font-semibold text-[11px] cursor-pointer"
+            >
+              Continue
+            </button>
+            <button
+              onClick={isCreator ? handleDestroyRoom : leaveCall}
+              className="px-3 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-[11px] cursor-pointer"
+            >
+              Leave conversation
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Capture Alert Banner: Remote Peer Capture Notification */}
+      {remoteCaptureAlert && !isRoomPaused && (
+        <div className="bg-zinc-900/90 border-b border-zinc-800 px-4 py-2.5 flex items-center justify-between text-xs z-30 animate-in slide-in-from-top duration-300">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="font-semibold text-zinc-200">Privacy alert:</span>
+            <span className="text-zinc-400">A supported capture mechanism was detected on another participant’s device.</span>
+          </div>
+          <button
+            onClick={() => setRemoteCaptureAlert(null)}
+            className="p-1 text-zinc-400 hover:text-white"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Strict Mode: Paused Room Overlay */}
+      {isRoomPaused && (
+        <div className="absolute inset-0 z-40 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-300">
+          <div className="max-w-md w-full p-8 rounded-3xl border border-red-500/40 bg-zinc-950 shadow-2xl">
+            <div className="w-14 h-14 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center text-red-400 mx-auto mb-4">
+              <Lock className="w-7 h-7" />
+            </div>
+
+            <h2 className="text-2xl font-bold tracking-tight mb-2 text-white">
+              Conversation paused
+            </h2>
+
+            <p className="text-sm text-zinc-300 mb-2 leading-relaxed">
+              Capture activity has been detected. This room is configured under <strong>Strict Privacy</strong>.
+            </p>
+
+            <p className="text-xs text-zinc-400 mb-6 font-mono">
+              All participants must acknowledge the risk before continuing.
+            </p>
+
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={acknowledgeAndResume}
+                className="w-full py-3.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm transition-all shadow-lg cursor-pointer"
+              >
+                I understand — continue conversation
+              </button>
+
+              <button
+                onClick={isCreator ? handleDestroyRoom : leaveCall}
+                className="w-full py-3 px-4 rounded-xl border border-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-900 text-xs font-medium transition-colors cursor-pointer"
+              >
+                Leave conversation
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Video Viewport */}
       <main className="flex-1 p-3 sm:p-5 flex flex-col justify-center relative overflow-hidden">
+        {/* Dynamic Watermark Overlay */}
+        <WatermarkOverlay roomId={roomId} enabled={watermarkEnabled} />
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-full max-w-7xl mx-auto w-full items-center">
           {/* Remote Video Tile */}
           <div className="relative rounded-2xl border border-zinc-800 bg-zinc-900/90 aspect-video md:aspect-auto md:h-[70vh] flex items-center justify-center overflow-hidden shadow-2xl">
@@ -729,29 +1046,35 @@ export default function RoomPage() {
               ref={remoteVideoRef}
               autoPlay
               playsInline
-              className={`w-full h-full object-cover ${!remotePeerConnected ? 'hidden' : ''}`}
+              className={`w-full h-full object-cover ${!remotePeerConnected || isRoomPaused ? 'hidden' : ''}`}
             />
-            {!remotePeerConnected && (
+            {(!remotePeerConnected || isRoomPaused) && (
               <div className="flex flex-col items-center text-center p-6">
                 <div className="w-16 h-16 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-400 mb-3 animate-pulse">
                   <VideoIcon className="w-6 h-6" />
                 </div>
-                <h3 className="text-base font-medium text-zinc-300 mb-1">Waiting for guest to join...</h3>
+                <h3 className="text-base font-medium text-zinc-300 mb-1">
+                  {isRoomPaused ? 'Media feed paused' : 'Waiting for guest to join...'}
+                </h3>
                 <p className="text-xs text-zinc-500 max-w-xs mb-4">
-                  Send the room link to your conversation partner.
+                  {isRoomPaused
+                    ? 'Video is masked while capture alert is resolved.'
+                    : 'Send the room link to your conversation partner.'}
                 </p>
-                <button
-                  onClick={copyRoomLink}
-                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs font-mono text-zinc-200 transition-colors"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>Copy room link</span>
-                </button>
+                {!remotePeerConnected && (
+                  <button
+                    onClick={copyRoomLink}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs font-mono text-zinc-200 transition-colors cursor-pointer"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Copy room link</span>
+                  </button>
+                )}
               </div>
             )}
 
             {/* Remote Peer Status Indicator */}
-            {remotePeerConnected && (
+            {remotePeerConnected && !isRoomPaused && (
               <div className="absolute top-4 left-4 flex items-center gap-2 bg-zinc-950/70 backdrop-blur-xs px-2.5 py-1 rounded-md border border-zinc-800 text-xs font-mono text-zinc-300">
                 <span className="w-2 h-2 rounded-full bg-emerald-500" />
                 <span>Guest</span>
@@ -771,12 +1094,14 @@ export default function RoomPage() {
               autoPlay
               playsInline
               muted
-              className={`w-full h-full object-cover ${!camActive ? 'hidden' : ''}`}
+              className={`w-full h-full object-cover ${!camActive || isRoomPaused ? 'hidden' : ''}`}
             />
-            {!camActive && (
+            {(!camActive || isRoomPaused) && (
               <div className="flex flex-col items-center text-zinc-500">
                 <VideoOff className="w-12 h-12 mb-2 stroke-1" />
-                <span className="text-xs font-mono">Camera off</span>
+                <span className="text-xs font-mono">
+                  {isRoomPaused ? 'Camera feed paused' : 'Camera off'}
+                </span>
               </div>
             )}
 
@@ -790,6 +1115,14 @@ export default function RoomPage() {
                 </span>
               )}
             </div>
+
+            {/* In-Call Screen Sharing Notice */}
+            {isScreenSharing && (
+              <div className="absolute bottom-4 left-4 right-4 bg-emerald-950/80 border border-emerald-500/30 py-1.5 px-3 rounded-lg text-xs font-mono text-emerald-300 flex items-center justify-between">
+                <span>You are sharing your screen with the room.</span>
+                <span className="text-[10px] text-zinc-400">Vanyshe Screen Share</span>
+              </div>
+            )}
           </div>
         </div>
       </main>
@@ -799,7 +1132,7 @@ export default function RoomPage() {
         {/* Microphone Toggle */}
         <button
           onClick={toggleMicrophone}
-          className={`p-3.5 rounded-full transition-all ${
+          className={`p-3.5 rounded-full transition-all cursor-pointer ${
             micActive
               ? 'bg-zinc-800 text-white hover:bg-zinc-700'
               : 'bg-red-500/20 text-red-400 border border-red-500/40 hover:bg-red-500/30'
@@ -812,7 +1145,7 @@ export default function RoomPage() {
         {/* Camera Toggle */}
         <button
           onClick={toggleCamera}
-          className={`p-3.5 rounded-full transition-all ${
+          className={`p-3.5 rounded-full transition-all cursor-pointer ${
             camActive
               ? 'bg-zinc-800 text-white hover:bg-zinc-700'
               : 'bg-red-500/20 text-red-400 border border-red-500/40 hover:bg-red-500/30'
@@ -825,7 +1158,7 @@ export default function RoomPage() {
         {/* Screen Sharing Toggle */}
         <button
           onClick={toggleScreenShare}
-          className={`p-3.5 rounded-full transition-all ${
+          className={`p-3.5 rounded-full transition-all cursor-pointer ${
             isScreenSharing
               ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30'
               : 'bg-zinc-800 text-white hover:bg-zinc-700'

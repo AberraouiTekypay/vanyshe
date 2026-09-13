@@ -6,6 +6,27 @@ export type RoomStatus =
   | 'EXPIRED'
   | 'DESTROYED';
 
+export type CapturePolicy = 'OFF' | 'DETECT_ALERT' | 'STRICT';
+
+export type ShieldSupportLevel = 'ACTIVE' | 'LIMITED' | 'UNSUPPORTED' | 'OFF';
+
+export type CaptureEventType =
+  | 'capture_detection_started'
+  | 'capture_detection_stopped'
+  | 'screen_capture_detected'
+  | 'screen_share_detected'
+  | 'browser_capture_state_changed'
+  | 'screenshot_attempt_detected'
+  | 'print_screen_detected';
+
+export interface CaptureDetectionEvent {
+  type: CaptureEventType;
+  timestamp: number;
+  source: 'local' | 'remote';
+  reliability: 'confirmed' | 'probable' | 'possible';
+  details?: string;
+}
+
 export interface RoomRecord {
   id: string;
   createdAt: number;
@@ -15,13 +36,24 @@ export interface RoomRecord {
   destroyedAt?: number;
   participantsCount: number;
   lastActiveAt: number;
+  capturePolicy?: CapturePolicy;
+  watermarkEnabled?: boolean;
 }
 
 export interface SignalMessage {
   id: string;
   senderId: string;
   targetId?: string;
-  type: 'offer' | 'answer' | 'candidate' | 'participant-joined' | 'participant-left' | 'room-destroyed';
+  type:
+    | 'offer'
+    | 'answer'
+    | 'candidate'
+    | 'participant-joined'
+    | 'participant-left'
+    | 'room-destroyed'
+    | 'privacy-shield-alert'
+    | 'privacy-shield-policy-change'
+    | 'privacy-shield-resume';
   payload: any;
   timestamp: number;
 }
@@ -48,7 +80,10 @@ export type EventName =
   | 'screen_share_started'
   | 'screen_share_ended'
   | 'return_visit'
-  | 'return_room_created';
+  | 'return_room_created'
+  | 'privacy_shield_policy_set'
+  | 'capture_event_detected'
+  | 'privacy_shield_acknowledged';
 
 export interface AnalyticsEvent {
   eventId: string;

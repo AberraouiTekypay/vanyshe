@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getRoom, registerParticipant, unregisterParticipant, destroyRoom } from '@/lib/rooms';
+import { getRoom, registerParticipant, unregisterParticipant, destroyRoom, updateRoomPolicy } from '@/lib/rooms';
 import { recordEvent } from '@/lib/analytics';
 import { hashRoomId } from '@/lib/crypto';
 
@@ -20,6 +20,8 @@ export async function GET(
     expiresAt: room.expiresAt,
     participantsCount: room.participantsCount,
     destroyedAt: room.destroyedAt,
+    capturePolicy: room.capturePolicy || 'DETECT_ALERT',
+    watermarkEnabled: room.watermarkEnabled || false,
   });
 }
 
@@ -78,6 +80,32 @@ export async function POST(
     });
 
     return NextResponse.json({ success: true, status: 'DESTROYED' });
+  }
+
+  if (action === 'update-policy') {
+    if (!creatorToken) {
+      return NextResponse.json({ error: 'Missing creator token' }, { status: 401 });
+    }
+
+    const { capturePolicy, watermarkEnabled } = body;
+    const result = updateRoomPolicy(roomId, creatorToken, capturePolicy, watermarkEnabled);
+    if (!result.success) {
+      return NextResponse.json({ error: result.error }, { status: 403 });
+    }
+
+    recordEvent({
+      eventName: 'privacy_shield_policy_set',
+      anonymousId,
+      sessionId,
+      roomSafeRef: hashRoomId(roomId),
+      language: language || 'en',
+    });
+
+    return NextResponse.json({
+      success: true,
+      capturePolicy: result.room?.capturePolicy,
+      watermarkEnabled: result.room?.watermarkEnabled,
+    });
   }
 
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 });

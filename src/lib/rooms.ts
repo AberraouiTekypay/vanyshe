@@ -1,4 +1,4 @@
-import { RoomRecord, RoomStatus, SignalMessage } from './types';
+import { RoomRecord, RoomStatus, SignalMessage, CapturePolicy } from './types';
 import { generateRoomId, generateCreatorToken } from './crypto';
 
 // Ephemeral in-memory store
@@ -24,7 +24,10 @@ function cleanupOldRooms() {
   }
 }
 
-export function createRoom(): { room: RoomRecord; creatorToken: string } {
+export function createRoom(options?: {
+  capturePolicy?: CapturePolicy;
+  watermarkEnabled?: boolean;
+}): { room: RoomRecord; creatorToken: string } {
   cleanupOldRooms();
 
   const id = generateRoomId();
@@ -39,12 +42,38 @@ export function createRoom(): { room: RoomRecord; creatorToken: string } {
     creatorToken,
     participantsCount: 0,
     lastActiveAt: now,
+    capturePolicy: options?.capturePolicy || 'DETECT_ALERT',
+    watermarkEnabled: options?.watermarkEnabled || false,
   };
 
   roomsMap.set(id, room);
   signalsMap.set(id, []);
 
   return { room, creatorToken };
+}
+
+export function updateRoomPolicy(
+  id: string,
+  token: string,
+  capturePolicy: CapturePolicy,
+  watermarkEnabled?: boolean
+): { success: boolean; room?: RoomRecord; error?: string } {
+  const room = roomsMap.get(id);
+  if (!room) {
+    return { success: false, error: 'Room not found' };
+  }
+
+  if (room.creatorToken && room.creatorToken !== token) {
+    return { success: false, error: 'Unauthorized: invalid creator token' };
+  }
+
+  room.capturePolicy = capturePolicy;
+  if (typeof watermarkEnabled === 'boolean') {
+    room.watermarkEnabled = watermarkEnabled;
+  }
+  room.lastActiveAt = Date.now();
+
+  return { success: true, room };
 }
 
 export function getRoom(id: string): RoomRecord | null {
@@ -60,6 +89,8 @@ export function getRoom(id: string): RoomRecord | null {
       destroyedAt: Date.now(),
       participantsCount: 0,
       lastActiveAt: Date.now(),
+      capturePolicy: 'DETECT_ALERT',
+      watermarkEnabled: false,
     };
   }
 
@@ -75,6 +106,8 @@ export function getRoom(id: string): RoomRecord | null {
         creatorToken: '',
         participantsCount: 1,
         lastActiveAt: Date.now(),
+        capturePolicy: 'DETECT_ALERT',
+        watermarkEnabled: false,
       };
       roomsMap.set(id, room);
       signalsMap.set(id, []);

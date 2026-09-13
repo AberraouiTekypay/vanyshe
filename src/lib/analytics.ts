@@ -29,6 +29,9 @@ const VALID_EVENTS: Set<EventName> = new Set([
   'screen_share_ended',
   'return_visit',
   'return_room_created',
+  'privacy_shield_policy_set',
+  'capture_event_detected',
+  'privacy_shield_acknowledged',
 ]);
 
 // Prohibited keys that might carry conversation content

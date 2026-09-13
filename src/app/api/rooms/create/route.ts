@@ -5,15 +5,17 @@ import { hashRoomId } from '@/lib/crypto';
 
 export async function POST(request: Request) {
   try {
-    const { room, creatorToken } = createRoom();
-
-    // Ingest first-party anonymous room_created event
     let body: any = {};
     try {
       body = await request.json();
     } catch {
       // body optional
     }
+
+    const { room, creatorToken } = createRoom({
+      capturePolicy: body.capturePolicy,
+      watermarkEnabled: body.watermarkEnabled,
+    });
 
     recordEvent({
       eventName: 'room_created',
@@ -26,11 +28,23 @@ export async function POST(request: Request) {
       referrerCategory: body.referrerCategory,
     });
 
+    if (room.capturePolicy && room.capturePolicy !== 'OFF') {
+      recordEvent({
+        eventName: 'privacy_shield_policy_set',
+        anonymousId: body.anonymousId,
+        roomSafeRef: hashRoomId(room.id),
+        sessionId: body.sessionId,
+        language: body.language || 'en',
+      });
+    }
+
     return NextResponse.json({
       roomId: room.id,
       creatorToken,
       expiresAt: room.expiresAt,
       status: room.status,
+      capturePolicy: room.capturePolicy,
+      watermarkEnabled: room.watermarkEnabled,
     });
   } catch (error) {
     console.error('Error creating room:', error);

@@ -105,12 +105,36 @@ export default function PrivacyPage() {
               </ul>
             </section>
 
+            <section>
+              <h2 className="text-xl font-bold text-zinc-950 dark:text-white flex items-center gap-2 mb-3">
+                <Shield className="w-5 h-5 text-emerald-500" />
+                6. Vanyshe Privacy Shield & Capture Detection Disclosures
+              </h2>
+              <p>
+                Vanyshe incorporates the <strong>Vanyshe Privacy Shield</strong>, an incremental browser-level security module designed around four fundamental layers:
+              </p>
+              <ul className="list-disc pl-5 space-y-2 mt-3">
+                <li><strong>Layer 1 — Vanyshe Does Not Record:</strong> Our architecture contains zero recording mechanisms, no hidden audio capture, no transcripts, and no replay storage.</li>
+                <li><strong>Layer 2 — Supported Capture Detection:</strong> Where relevant browser APIs and platform conventions make signals available (e.g. PrintScreen key events, keyboard shortcut heuristics, or in-page display sharing), the Privacy Shield monitors for activity.</li>
+                <li><strong>Layer 3 — Non-Alarmist Participant Alerts:</strong> When a supported capture event occurs, participants receive a clear disclosure. In Alert mode, participants are notified; in Strict mode, rooms automatically pause until acknowledged.</li>
+                <li><strong>Layer 4 — Room Policy Enforcement:</strong> Room creators can establish their desired capture policy (Off, Detect & Alert, or Strict Privacy).</li>
+              </ul>
+              <div className="mt-4 p-4 rounded-xl border border-amber-500/30 bg-amber-500/5 text-xs text-zinc-300">
+                <p className="font-semibold text-amber-400 mb-1">
+                  Important Platform & Physical Limitations:
+                </p>
+                <p className="text-zinc-400 leading-relaxed">
+                  Capture detection is not universal and cannot detect every form of recording, screenshotting, photography, or external capture. Web applications are strictly sandboxed by the operating system. Vanyshe cannot detect external physical cameras, smartphones filming the display, hardware HDMI capture cards, or third-party background software (such as OBS Studio or OS-level recording tools) running outside the browser sandbox. Mobile web browsers (iOS Safari and Android Chrome) do not expose OS-level screenshot events to web pages.
+                </p>
+              </div>
+            </section>
+
             <section className="border-t border-zinc-200 dark:border-zinc-800 pt-6">
               <h3 className="text-base font-semibold text-zinc-950 dark:text-white mb-2">
-                6. Contact
+                7. Contact
               </h3>
               <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                For questions regarding this privacy policy or technical data practices, contact: <code>privacy@vanyshe.com</code>.
+                For questions regarding this privacy policy, the Privacy Shield, or technical data practices, contact: <code>privacy@vanyshe.com</code>.
               </p>
             </section>
           </div>

@@ -52,6 +52,7 @@ export default function LandingPage() {
   const [creating, setCreating] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [useCaseTab, setUseCaseTab] = useState<'b2b' | 'b2c'>('b2b');
+  const [capturePolicy, setCapturePolicy] = useState<'DETECT_ALERT' | 'STRICT' | 'OFF'>('DETECT_ALERT');
 
   const isRtl = dir === 'rtl';
 
@@ -63,7 +64,7 @@ export default function LandingPage() {
       const res = await fetch('/api/rooms/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ language: locale }),
+        body: JSON.stringify({ language: locale, capturePolicy }),
       });
       const data = await res.json();
       if (data.roomId) {
@@ -286,6 +287,49 @@ export default function LandingPage() {
             >
               {locale === 'fr' ? 'Découvrir les Tarifs' : locale === 'ar' ? 'عرض خطط الأسعار' : 'Explore Plans & Pricing'}
             </a>
+          </div>
+
+          {/* Quick Room Privacy Policy Configuration */}
+          <div className="flex flex-wrap items-center justify-center gap-2 mb-8 text-xs font-mono">
+            <span className="text-zinc-500 flex items-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Capture Policy:</span>
+            </span>
+            <div className="inline-flex items-center rounded-xl border border-zinc-200 dark:border-zinc-800 p-0.5 bg-zinc-100/70 dark:bg-zinc-900/70">
+              <button
+                type="button"
+                onClick={() => setCapturePolicy('DETECT_ALERT')}
+                className={`px-3 py-1 rounded-lg transition-all font-semibold cursor-pointer ${
+                  capturePolicy === 'DETECT_ALERT'
+                    ? 'bg-white dark:bg-zinc-800 text-emerald-600 dark:text-emerald-400 shadow-xs'
+                    : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-white'
+                }`}
+              >
+                Detect & Alert (Default)
+              </button>
+              <button
+                type="button"
+                onClick={() => setCapturePolicy('STRICT')}
+                className={`px-3 py-1 rounded-lg transition-all font-semibold cursor-pointer ${
+                  capturePolicy === 'STRICT'
+                    ? 'bg-white dark:bg-zinc-800 text-red-500 shadow-xs'
+                    : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-white'
+                }`}
+              >
+                Strict Privacy
+              </button>
+              <button
+                type="button"
+                onClick={() => setCapturePolicy('OFF')}
+                className={`px-3 py-1 rounded-lg transition-all font-semibold cursor-pointer ${
+                  capturePolicy === 'OFF'
+                    ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white shadow-xs'
+                    : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-white'
+                }`}
+              >
+                Off
+              </button>
+            </div>
           </div>
 
           {/* Trust Indicators */}

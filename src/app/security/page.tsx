@@ -1,7 +1,7 @@
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import { I18nProvider } from '@/lib/i18n/context';
-import { ShieldCheck, Network, Lock, Cpu, Server, CheckCircle2 } from 'lucide-react';
+import { ShieldCheck, Network, Lock, Cpu, Server, CheckCircle2, ShieldAlert } from 'lucide-react';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
@@ -115,6 +115,61 @@ Browser B (Guest)`}
                 <li>WebRTC PeerConnections are immediately closed, dropping all active tracks.</li>
                 <li>Subsequent requests to join or access the room return HTTP 410 / "Conversation destroyed".</li>
               </ul>
+            </section>
+
+            {/* Privacy Shield & Capture Detection */}
+            <section>
+              <h2 className="text-xl font-bold text-zinc-950 dark:text-white flex items-center gap-2 mb-4">
+                <ShieldAlert className="w-5 h-5 text-emerald-500" />
+                6. Vanyshe Privacy Shield &amp; Capture Detection
+              </h2>
+              <p>
+                Vanyshe includes a purpose-built security and capture-awareness module called <strong>Privacy Shield</strong>. Because standard web applications run in a sandboxed browser environment, technical honesty regarding screen capture boundaries is paramount:
+              </p>
+              
+              <div className="mt-4 p-5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 space-y-4">
+                <div>
+                  <h3 className="font-semibold text-zinc-950 dark:text-white text-sm mb-1">In-Transit vs Local Rendering Decryption</h3>
+                  <p className="text-xs sm:text-sm text-zinc-600 dark:text-zinc-400">
+                    WebRTC DTLS-SRTP rigorously safeguards media while it is in transit over the network. However, once media packets reach a peer device, the browser WebRTC engine must decrypt them into raw frames to render them on the display and audio output hardware. At that point, the media exists inside the client device display buffer.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="font-semibold text-zinc-950 dark:text-white text-sm mb-1">What Privacy Shield Detects</h3>
+                  <ul className="list-disc pl-5 space-y-1 text-xs sm:text-sm text-zinc-600 dark:text-zinc-400">
+                    <li><strong>PrintScreen Key Events:</strong> Captured on supported desktop operating systems (Windows, Linux) via standard DOM keyboard events.</li>
+                    <li><strong>Operating System Screenshot Shortcuts:</strong> Heuristic sequence monitoring for Windows Snipping Tool (<code>Win+Shift+S</code>) and macOS Grab/Screenshots (<code>Cmd+Shift+3/4/5</code>), correlated with window blur timestamps.</li>
+                    <li><strong>Browser-Initiated Capture:</strong> Detects in-page screen sharing (<code>getDisplayMedia</code>) and distinguishes intentional Vanyshe screen shares from third-party window capture.</li>
+                    <li><strong>Window Visibility Fluctuations:</strong> Flags suspicious focus loss when correlated with capture keystrokes.</li>
+                  </ul>
+                </div>
+
+                <div>
+                  <h3 className="font-semibold text-zinc-950 dark:text-white text-sm mb-1">Browser Sandbox &amp; Hardware Boundaries</h3>
+                  <p className="text-xs sm:text-sm text-zinc-600 dark:text-zinc-400">
+                    Operating system isolation models deliberately prevent unprivileged web pages from observing or interfering with external processes. Consequently, no web browser can detect:
+                  </p>
+                  <ul className="list-disc pl-5 space-y-1 mt-1 text-xs sm:text-sm text-zinc-600 dark:text-zinc-400">
+                    <li>Background OS-level recording applications (e.g., OBS Studio, QuickTime Player, Windows Game Bar).</li>
+                    <li>Hardware-level capture devices (HDMI/DisplayPort capture cards, KVM recorders).</li>
+                    <li>External physical recording (e.g., another smartphone or camera pointed at the screen).</li>
+                    <li>Hardware screenshot key combinations on mobile operating systems (iOS and Android native buttons bypass web DOM events).</li>
+                  </ul>
+                </div>
+
+                <div>
+                  <h3 className="font-semibold text-zinc-950 dark:text-white text-sm mb-1">Mitigation &amp; Room Policy Enforcement</h3>
+                  <p className="text-xs sm:text-sm text-zinc-600 dark:text-zinc-400">
+                    To deter unauthorized capture where detection is physically bounded, Vanyshe deploys defense-in-depth measures:
+                  </p>
+                  <ul className="list-disc pl-5 space-y-1 mt-1 text-xs sm:text-sm text-zinc-600 dark:text-zinc-400">
+                    <li><strong>Dynamic Watermarking:</strong> Overlays shifting semi-transparent room IDs and timestamps over video feeds, rendering surreptitious re-sharing non-repudiable and attributable.</li>
+                    <li><strong>Configurable Capture Policies:</strong> Room creators can set rooms to <code>DETECT_ALERT</code> (broadcasts warnings immediately to all peers upon detection) or <code>STRICT</code> (immediately pauses the room and blurs video until participants acknowledge the event).</li>
+                    <li><strong>No Server Replay Infrastructure:</strong> Vanyshe never stores, buffers, or records calls on server infrastructure.</li>
+                  </ul>
+                </div>
+              </div>
             </section>
           </div>
         </main>
