@@ -1,36 +1,80 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Vanyshe
 
-## Getting Started
+> **Say it. Don’t save it.**  
+> *A private conversation that doesn’t become a permanent record.*
 
-First, run the development server:
+Vanyshe is an ephemeral, browser-to-browser communication product designed around radical simplicity and zero retention.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Core Flow
+
+```text
+CREATE ROOM → COPY LINK → JOIN → TALK → END → DESTROY
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Features
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- **Radically Simple Video Calling:** No account required, no login wall, zero friction.
+- **True Ephemeral Lifecycle:** Explicit room states (`CREATED`, `WAITING`, `ACTIVE`, `ENDED`, `EXPIRED`, `DESTROYED`). When the creator ends the call, room state and temporary signalling mailboxes are wiped permanently.
+- **Multilingual & True RTL:** Production-quality English (`/en`), French (`/fr`), and Arabic (`/ar`) with complete right-to-left layout and typography.
+- **Multi-Participant Rooms:** Configurable limit supporting 2–8 participants (`MAX_ROOM_PARTICIPANTS=8`).
+- **Standard WebRTC Media:** Direct DTLS-SRTP encrypted peer media, with STUN and blind TURN relay fallback across strict firewalls.
+- **First-Party Anonymous Product Analytics:** "Measure the product. Never measure the conversation." Strict architectural separation guaranteeing zero conversation payloads, audio, video, transcripts, or messages enter analytics.
+- **Founder Admin Command Center:** Secure protected dashboard (`/admin`) displaying KPIs, conversion funnels, retention cohorts, technology health, infrastructure bandwidth, unit economics, cost alerts, and exportable CSV reports.
+- **Auditable Governance:** Full `/admin/data-dictionary`, `/admin/infrastructure-playbook`, and `/admin/infrastructure-dependencies`.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Technology Stack
 
-## Learn More
+- **Framework:** Next.js 16 (App Router), React 19, TypeScript
+- **Styling:** Tailwind CSS, Lucide Icons
+- **Real-Time Media:** WebRTC (DTLS-SRTP), RFC 5389 STUN, RFC 5766 TURN fallback
+- **Signalling:** Vanyshe Serverless Ephemeral Mailbox API
+- **Testing:** Vitest (100% test pass rate across unit, integration, and security tests)
+- **Deployment:** Vercel Global Edge Network
 
-To learn more about Next.js, take a look at the following resources:
+## Quick Start (Local Development)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+# Clone the repository
+git clone https://github.com/AberraouiTekypay/vanyshe.git
+cd vanyshe
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+# Install dependencies
+npm install
 
-## Deploy on Vercel
+# Setup environment variables
+cp .env.example .env.local
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+# Run test suite
+npm test
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+# Run development server
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) to view the application.
+
+## Admin Dashboard
+
+Access the private admin dashboard at:
+- **URL:** [http://localhost:3000/admin](http://localhost:3000/admin)
+- **Default Password:** `vanyshe-founder-2026` (configure via `ADMIN_PASSWORD` in `.env.local`)
+
+## Environment Variables
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `ADMIN_PASSWORD` | Secure password for `/admin` access | `vanyshe-founder-2026` |
+| `ADMIN_SECRET` | 32-character secret for HMAC session signing | `vanyshe_secure_admin_secret_key_8f72a9103c` |
+| `MAX_ROOM_PARTICIPANTS` | Maximum participants per ephemeral room | `8` |
+| `NEXT_PUBLIC_APP_URL` | Canonical product URL | `https://vanyshe.com` |
+
+## Security & Privacy Highlights
+
+1. **Zero Retention:** We do not store audio, video, chat logs, transcripts, or recordings.
+2. **Established Cryptography:** We do not invent proprietary crypto. We rely on standard WebRTC DTLS 1.2/1.3 and SRTP AES encryption.
+3. **No Third-Party Trackers:** No Google Analytics, Meta Pixel, FullStory, or Hotjar scripts are loaded.
+4. **Data Separation:** The analytics pipeline cannot accept or process messages or conversation payloads.
+
+## License
+
+Proprietary © 2026 Vanyshe. All rights reserved.

@@ -8,29 +8,12 @@ export const metadata: Metadata = {
   title: 'Vanyshe — Private Conversations That Don’t Stay',
   description:
     'Private conversations, designed to disappear. Create a room, send one link, talk securely, and end the conversation. Vanyshe doesn’t retain your call.',
-  openGraph: {
-    title: 'Vanyshe — Say it. Don’t save it.',
-    description: 'Ephemeral browser-to-browser video and audio communication. Zero conversation retention.',
-    url: 'https://vanyshe.com',
-    siteName: 'Vanyshe',
-    type: 'website',
-  },
-  twitter: {
-    card: 'summary_large_image',
-    title: 'Vanyshe — Say it. Don’t save it.',
-    description: 'Private conversations, designed to disappear. Vanyshe doesn’t retain your call.',
-  },
   alternates: {
-    canonical: 'https://vanyshe.com',
-    languages: {
-      en: 'https://vanyshe.com/en',
-      fr: 'https://vanyshe.com/fr',
-      ar: 'https://vanyshe.com/ar',
-    },
+    canonical: 'https://vanyshe.com/en',
   },
 };
 
-export default function Home() {
+export default function EnglishPage() {
   return (
     <I18nProvider initialLocale="en">
       <div className="min-h-screen flex flex-col bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 transition-colors">
