@@ -31,6 +31,20 @@ Vanyshe adheres strictly to established internet standards:
 - **Content-Type Protection:** `X-Content-Type-Options: nosniff`.
 - **Permissions-Policy:** Explicitly restrains browser features (`camera=(self), microphone=(self), display-capture=(self), geolocation=()`).
 
+## Vanyshe Privacy Shield & Capture Detection Boundaries
+
+### In-Transit vs Local Rendering Decryption
+WebRTC DTLS-SRTP secures packet streams end-to-end across public network infrastructure. However, once media packets reach the destination device, the browser must decrypt the media frames locally to composite them onto the hardware display buffer.
+
+### Operating System Sandboxing Limits
+Because web applications operate within a sandboxed browser runtime:
+- **Detectable Signals:** Hardware `PrintScreen` key events, shortcut sequences (`Win+Shift+S`, `Cmd+Shift+3/4/5`) correlated with focus loss, and in-page display capture calls.
+- **Undetectable Channels:** Background OS-level recording applications (OBS, QuickTime, Game Bar), hardware capture cards (HDMI taps), physical external cameras, and mobile hardware button combinations.
+
+### Defense-in-Depth Deterrence
+- **Dynamic Shifting Watermarking:** Semi-transparent, shifting visual patterns containing room hash and timestamp embedded across video tiles, deterring unauthorized leakage through non-repudiation.
+- **Strict Privacy Mode:** Automatically pauses media feeds across all participants upon supported capture detection until participants manually acknowledge the warning.
+
 ## Reporting Vulnerabilities
 
 Security issues may be reported responsibly to `security@vanyshe.com`.

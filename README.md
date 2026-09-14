@@ -14,6 +14,9 @@ CREATE ROOM → COPY LINK → JOIN → TALK → END → DESTROY
 ## Features
 
 - **Radically Simple Video Calling:** No account required, no login wall, zero friction.
+- **Vanyshe Privacy Shield (Capture Detection):** Real-time monitoring for supported capture activity (PrintScreen keys, OS shortcut sequence heuristics, in-page screen sharing) with room policies (`OFF`, `DETECT_ALERT`, `STRICT`).
+- **Dynamic Visual Watermark:** Non-repudiable shifting overlay with room ID and timestamps across media tiles to deter unauthorized screen sharing.
+- **Pre-Allocated Media Transceivers:** Unified Plan audio & video transceivers pre-negotiated from connection establishment, enabling instantaneous, seamless camera toggling without SDP renegotiation glare.
 - **True Ephemeral Lifecycle:** Explicit room states (`CREATED`, `WAITING`, `ACTIVE`, `ENDED`, `EXPIRED`, `DESTROYED`). When the creator ends the call, room state and temporary signalling mailboxes are wiped permanently.
 - **Multilingual & True RTL:** Production-quality English (`/en`), French (`/fr`), and Arabic (`/ar`) with complete right-to-left layout and typography.
 - **Multi-Participant Rooms:** Configurable limit supporting 2–8 participants (`MAX_ROOM_PARTICIPANTS=8`).

@@ -77,3 +77,41 @@ Every room follows strict, non-reversible state transitions:
 2. **Stage 2 (10k–100k MAU):** P2P for 2 peers, Managed SFU (LiveKit/mediasoup) for 4–8 participants.
 3. **Stage 3 (100k–1M MAU):** Multi-region SFU with continental Anycast edges.
 4. **Stage 4 (1M+ MAU):** Hybrid self-hosted sovereign clusters for enterprise data residency.
+
+## 6. Vanyshe Privacy Shield Architecture
+
+The **Vanyshe Privacy Shield** is a browser-level security and capture-detection module designed around technical transparency and defense-in-depth:
+
+```text
+[DOM Keyboard Events] ──▶ (PrintScreen Keydown/Keyup) ─────┐
+[Modifier Sequences]  ──▶ (Win+Shift+S / Cmd+Shift+3,4,5) ─┼─▶ [CaptureDetector Engine]
+[Window Blur Timing]  ──▶ (Focus loss within 1200ms)  ─────┤             │
+[Display Media API]   ──▶ (External Screen Capture)   ─────┘             ▼
+                                                               ┌───────────────────┐
+                                                               │  Capture Policies │
+                                                               │  • OFF            │
+                                                               │  • DETECT_ALERT   │
+                                                               │  • STRICT         │
+                                                               └───────────────────┘
+                                                                         │
+                     ┌───────────────────────────────────────────────────┴──────────────────────────────────────────────────┐
+                     ▼                                                                                                      ▼
+           [DETECT_ALERT Policy]                                                                                   [STRICT Policy]
+   • Persistent in-room status indicator                                                                   • Media paused immediately
+   • Shifting non-repudiable watermark                                                                     • High-visibility alert dialog
+   • Broadcast warning to peer endpoints                                                                   • Acknowledgment required to resume
+```
+
+### Technical Honesty Invariants:
+- **Zero OS Process Probing:** Operating system security sandboxing strictly isolates web applications from external background processes. Background tools (OBS Studio, QuickTime Player, Windows Game Bar) cannot be detected by any web browser.
+- **Zero Hardware Probe:** Hardware capture cards (HDMI/DisplayPort grabbers) and physical cameras pointed at a screen operate outside the computer's software stack and are undetectable.
+- **Mobile Platform Isolation:** Native iOS and Android hardware screenshot button events bypass WebKit and Chromium DOM layers and do not fire web events. Mobile devices are classified honestly as `LIMITED` support.
+
+## 7. Real-Time Media Pipeline & Transceiver Pre-allocation
+
+To ensure seamless camera/microphone toggling and eliminate renegotiation glare:
+- **Pre-allocated Transceivers:** `pc.addTransceiver('audio', { direction: 'sendrecv' })` and `pc.addTransceiver('video', { direction: 'sendrecv' })` are initialized during WebRTC setup. Both media tracks are negotiated in the initial SDP exchange.
+- **Dynamic Track Swapping:** When participants turn cameras on or off, `videoSender.replaceTrack(track)` swaps the underlying media stream instantly with zero SDP renegotiation.
+- **Dynamic Acquisition:** If a participant enters without camera permissions and later enables video, `getUserMedia({ video: true })` dynamically acquires a new track, attaches it to the local stream, and binds it to the video transceiver.
+- **ICE Candidate Buffer:** Candidates arriving before remote SDP resolution are buffered in `iceCandidatesQueueRef` and flushed sequentially once `setRemoteDescription` completes.
+

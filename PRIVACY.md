@@ -33,8 +33,18 @@ Vanyshe utilizes a strictly separated, first-party telemetry system:
 - **Strict Payload Filter:** The analytics intake API rejects any event containing forbidden fields such as `chat`, `message`, `text`, `audio`, `video`, `transcript`, `payload`, `password`, or `email`.
 - **Retention:** Raw events are retained for up to 30 days for system debugging, after which they are rolled into aggregate counts (e.g., total rooms created).
 
-## 4. Realistic Boundaries
+## 4. Vanyshe Privacy Shield Disclosures
+
+Vanyshe incorporates the **Vanyshe Privacy Shield** designed around four layers:
+1. **Layer 1 — Vanyshe Does Not Record:** We provide zero server-side recording, zero transcription, and zero video archiving.
+2. **Layer 2 — Supported Capture Detection:** Where platform APIs expose DOM keyboard events or screen-share requests, supported signals are monitored.
+3. **Layer 3 — Transparent Non-Attributed Warnings:** Alerts notify participants of possible capture activity without revealing personal identity.
+4. **Layer 4 — Configurable Room Policies:** Room creators can select `OFF`, `DETECT_ALERT` (Default), or `STRICT` (automatically pausing video feeds upon capture detection until acknowledged).
+
+## 5. Realistic Boundaries
 
 - Vanyshe does not make false marketing claims like "impossible to record" or "unhackable".
-- Any participant in any call can independently choose to record their screen or use an external device.
+- Operating system process isolation prevents web applications from detecting background desktop recording applications (OBS Studio, QuickTime, Game Bar).
+- Hardware-level capture devices (HDMI/DisplayPort capture cards) and external cameras operate outside the computer's software stack and cannot be detected.
+- Native mobile operating systems (iOS Safari and Android Chrome) isolate hardware screenshot button events from web browsers.
 - Users subject to formal industry or legal recordkeeping mandates must adhere to their regulatory requirements.
